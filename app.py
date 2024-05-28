@@ -28,7 +28,6 @@ class FloatingApp:
         self.root.bind('<B1-Motion>', self.do_move)
         
         # Make the background transparent
-        # self.root.wm_attributes('-transparentcolor', 'white')  # Change 'white' to your transparent color if needed
         self.root.wm_attributes('-transparentcolor', self.root['bg']) 
 
     def create_widgets(self):
@@ -76,19 +75,15 @@ class FloatingApp:
         icon_image = Image.open("img/icon.ico").convert('RGBA')
 
         # Convert the icon to the appropriate format for pystray
-        icon = pystray.Icon('FloatingApp', icon_image, 'Floating App', self.create_menu())
-        return icon
+        return pystray.Icon(
+            name='WaifuClock',
+            icon=icon_image,
+            title='Waifu Clock',
+            menu=pystray.Menu(
+                pystray.MenuItem('Show', self.root.deiconify, default=True),
+                pystray.MenuItem('Exit', self.exit_app)
+        ))
 
-    def create_menu(self):
-        # Create the context menu for the tray icon
-        return pystray.Menu(
-            pystray.MenuItem('Show', self.show_app),
-            pystray.MenuItem('Exit', self.exit_app)
-        )
-
-    def show_app(self, icon=None, item=None):
-        # Show the application window
-        self.root.deiconify()
 
 if __name__ == '__main__':
     root = tk.Tk()
