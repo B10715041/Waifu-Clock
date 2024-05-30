@@ -1,9 +1,100 @@
-import tkinter as tk
-import tkinter.font as tkFont
+from PIL import Image
 from datetime import datetime
-import threading
+from tkinter import ttk
+import json
 import pystray
-from PIL import Image, ImageDraw, ImageTk
+import threading
+import tkinter as tk
+
+
+class EditAlarmDialog:
+    def __init__(self, master, alarm_data=None):
+        self.top = tk.Toplevel(master)
+        self.top.title('Edit Alarm')
+        self.top.grab_set()
+
+        self.alarm_data = alarm_data if alarm_data else { 'time': '', 'music': '', 'comment': '' }
+
+        ttk.Label(self.top, text='Time:').pack()
+        self.time_entry = ttk.Entry(self.top)
+        self.time_entry.pack()
+        self.time_entry.insert(0, self.alarm_data.get('time', ''))
+
+        ttk.Label(self.top, text='Music:').pack()
+        self.music_entry = ttk.Entry(self.top)
+        self.music_entry.pack()
+        self.music_entry.insert(0, self.alarm_data.get('music', ''))
+
+        self.comment_label = ttk.Label(self.top, text='Comment:')
+        self.comment_label.pack()
+        self.comment_entry = tk.Text(self.top, height=5, width=30)
+        self.comment_entry.pack()
+        self.comment_entry.insert('1.0', self.alarm_data.get('comment', ''))
+        self.comment_entry.config(wrap='word')
+
+        ttk.Button(self.top, text='Save', command=self.save).pack()
+
+    def save(self):
+        self.alarm_data['time'] = self.time_entry.get()
+        self.alarm_data['music'] = self.music_entry.get()
+        self.alarm_data['comment'] = self.comment_entry.get('1.0', 'end-1c')
+        self.top.destroy()
+
+
+class SettingsWindow:
+    def __init__(self, master):
+        self.top = tk.Toplevel(master)
+        self.top.title('Settings')
+        self.top.iconbitmap('img/icon.ico')
+        self.top.transient(master)
+        self.top.grab_set() # Direct all events to this window
+
+        self.notebook = ttk.Notebook(self.top)
+        self.notebook.pack(fill='both', expand=True)
+
+        self.alarm_tab = ttk.Frame(self.notebook)
+        self.timer_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.alarm_tab, text='Alarm')
+        self.notebook.add(self.timer_tab, text='Timer')
+
+        self.canvas = tk.Canvas(self.alarm_tab)
+        self.scrollbar = ttk.Scrollbar(self.alarm_tab, orient='vertical', command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        ttk.Button(self.alarm_tab, text='Add Alarm', command=self.add_alarm).pack()
+        self.alarms = []
+
+        self.populate_alarm_tab()
+        self.populate_timer_tab()
+
+        self.top.wait_window()  # Wait for the window to be closed
+
+    def add_alarm(self):
+        new_alarm = {'time': '07:00', 'music': 'audios/default.mp3', 'comment': ''}
+        self.alarms.append(new_alarm)
+        ttk.Button(self.scrollable_frame, text=f"Alarm at {new_alarm['time']}", command=lambda: self.edit_alarm(new_alarm)).pack()
+
+    def edit_alarm(self, alarm_data):
+        EditAlarmDialog(self.top, alarm_data=alarm_data)
+
+    def populate_alarm_tab(self):
+        self.alarm_label = ttk.Label(self.alarm_tab, text='Alarm Settings')
+        self.alarm_label.pack(pady=10, padx=10)
+
+    def populate_timer_tab(self):
+        self.timer_label = ttk.Label(self.timer_tab, text='Timer Settings')
+        self.timer_label.pack(pady=10, padx=10)
+
+
 
 class CanvasButton:
     def __init__(self, canvas, x, y, anchor, image, image_hover, command):
@@ -44,14 +135,14 @@ class FloatingApp:
         # Make the window draggable
         self.root.bind('<Button-1>', self.start_move)
         self.root.bind('<B1-Motion>', self.do_move)
-        
+
         # Make the background transparent
-        self.root.wm_attributes('-transparentcolor', self.root['bg']) 
+        self.root.wm_attributes('-transparentcolor', self.root['bg'])
 
     def create_widgets(self):
         self.canvas = tk.Canvas(self.root, width=320, height=195)
         self.canvas.pack(fill='both', expand=True)
-        
+
         self.canvas.create_image(0, 195, image=self.bg_image, anchor='sw')
         self.avatar = self.canvas.create_image(320, 200, image=self.avatar_image, anchor='se')
 
@@ -59,8 +150,7 @@ class FloatingApp:
         self.time = self.canvas.create_text(20, 115, text='', font=('なつめもじ', 20), fill='black', anchor='w', tags='time')
 
         self.hide_button = CanvasButton(self.canvas, 20, 190, 'sw', 'img/close.png', 'img/close_hover.png', self.hide_app)
-        self.settings_button = CanvasButton(self.canvas, 40, 190, 'sw', 'img/settings.png', 'img/settings_hover.png', 0)
-
+        self.settings_button = CanvasButton(self.canvas, 40, 190, 'sw', 'img/settings.png', 'img/settings_hover.png', self.open_settings)
 
     def update_time(self):
         # Update the label with the current date and time
@@ -110,6 +200,9 @@ class FloatingApp:
                 pystray.MenuItem('Show', self.root.deiconify, default=True),
                 pystray.MenuItem('Exit', self.exit_app)
         ))
+
+    def open_settings(self):
+        self.settings_panel = SettingsWindow(self.root)
 
 
 if __name__ == '__main__':
