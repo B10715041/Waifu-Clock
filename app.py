@@ -1,53 +1,131 @@
 from PIL import Image
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
-from tkinter import ttk
+from tkinter import ttk, messagebox, filedialog
 import json
 import pystray
+import re
 import threading
+import time
 import tkinter as tk
 
 
+class AlarmManager:
+    def __init__(self):
+        self.scheduler = BackgroundScheduler()
+        self.scheduler.start()
+        self.jobs = {}
+
+    def update_alarm(self, alarm_id, alarm_data):
+        if alarm_id in self.jobs:
+            self.jobs[alarm_id].remove()
+
+        hour, minute = map(int, alarm_data['time'].split(':'))
+        trigger = CronTrigger(hour = hour, minute = minute, second=0)
+        job = self.scheduler.add_job(self.play_sound, trigger, args=[alarm_data['music']])
+        self.jobs[alarm_id] = job
+            
+    def delete_alarm(self, alarm_id):
+        if alarm_id in self.jobs:
+            self.jobs[alarm_id].remove()
+            del self.jobs[alarm_id]
+
+    def play_sound(self, sound_file):
+        from playsound import playsound
+        playsound(sound_file)
+
+    def shutdown(self):
+        self.scheduler.shutdown()
+
+
 class EditAlarmDialog:
-    def __init__(self, master, alarm_data=None):
+    def __init__(self, master, alarm_index, alarm_data, update_callback, delete_callback):
         self.top = tk.Toplevel(master)
         self.top.title('Edit Alarm')
+        self.top.iconbitmap('images/icon.ico')
+        self.top.transient(master)
         self.top.grab_set()
+        self.top.lift()
+        self.top.focus_set()
 
-        self.alarm_data = alarm_data if alarm_data else { 'time': '', 'music': '', 'comment': '' }
+        self.alarm_data = alarm_data if alarm_data else { 'time': '', 'music': '', 'name': '' }
+        self.update_callback = update_callback
+        self.delete_callback = delete_callback
+        self.alarm_index = alarm_index
 
-        ttk.Label(self.top, text='Time:').pack()
-        self.time_entry = ttk.Entry(self.top)
-        self.time_entry.pack()
+        self.name_frame = tk.Frame(self.top)
+        self.name_frame.pack(fill=tk.X, padx=5)
+        self.name_image = tk.PhotoImage(file='images/edit.png')
+        tk.Label(self.name_frame, image=self.name_image).pack(side=tk.LEFT, pady=5)
+        self.name_entry = tk.Entry(self.name_frame)
+        self.name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.name_entry.insert('0', self.alarm_data.get('name', ''))
+
+        self.time_frame = tk.Frame(self.top)
+        self.time_frame.pack(fill=tk.X, padx=5)
+        self.time_image = tk.PhotoImage(file='images/alarm.png')
+        tk.Label(self.time_frame, image=self.time_image).pack(side=tk.LEFT, pady=5)
+        self.time_entry = tk.Entry(self.time_frame)
+        self.time_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.time_entry.insert(0, self.alarm_data.get('time', ''))
 
-        ttk.Label(self.top, text='Music:').pack()
-        self.music_entry = ttk.Entry(self.top)
-        self.music_entry.pack()
+        self.music_entry_frame = ttk.Frame(self.top)
+        self.music_entry_frame.pack(fill=tk.X, padx=5)
+        self.music_entry_image = tk.PhotoImage(file='images/note.png')
+        ttk.Label(self.music_entry_frame, image=self.music_entry_image).pack(side=tk.LEFT, pady=5)
+        self.music_entry = ttk.Entry(self.music_entry_frame)
+        self.music_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         self.music_entry.insert(0, self.alarm_data.get('music', ''))
+        self.music_button_image = tk.PhotoImage(file='images/search.png')
+        self.music_button = ttk.Button(self.music_entry_frame, image=self.music_button_image, command=self.browse_music)
+        self.music_button.pack(side=tk.RIGHT)
 
-        self.comment_label = ttk.Label(self.top, text='Comment:')
-        self.comment_label.pack()
-        self.comment_entry = tk.Text(self.top, height=5, width=30)
-        self.comment_entry.pack()
-        self.comment_entry.insert('1.0', self.alarm_data.get('comment', ''))
-        self.comment_entry.config(wrap='word')
+        self.bottom_frame = ttk.Frame(self.top)
+        self.bottom_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(self.bottom_frame, text='Save', command=self.save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.bottom_frame, text='Delete', command=self.delete).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Button(self.top, text='Save', command=self.save).pack()
+    def browse_music(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[('Audio Files', '*.mp3 *.wav *.ogg'), ('All Files', '*.*')])
+        if file_path:
+            self.music_entry.delete(0, tk.END)
+            self.music_entry.insert(0, file_path)
+
+    def validate_time(self, time_str):
+        """ Validate time foramat HH:MM """
+        if not re.match(r'^\d{2}:\d{2}$', time_str):
+            return False
+        hour, minute = map(int, time_str.split(':'))
+        return 0 <= hour < 24 and 0 <= minute < 60
 
     def save(self):
         self.alarm_data['time'] = self.time_entry.get()
         self.alarm_data['music'] = self.music_entry.get()
-        self.alarm_data['comment'] = self.comment_entry.get('1.0', 'end-1c')
+        self.alarm_data['name'] = self.name_entry.get()
+
+        if not self.validate_time(self.alarm_data['time']):
+            messagebox.showerror('Invalid Time', 'Please enter a valid time in the format HH:MM')
+            return
+
+        self.update_callback(self.alarm_index, self.alarm_data)
+        self.top.destroy()
+
+    def delete(self):
+        self.delete_callback(self.alarm_index)
         self.top.destroy()
 
 
 class SettingsWindow:
-    def __init__(self, master):
+    def __init__(self, master, alarm_manager):
         self.top = tk.Toplevel(master)
         self.top.title('Settings')
-        self.top.iconbitmap('img/icon.ico')
+        self.top.iconbitmap('images/icon.ico')
         self.top.transient(master)
         self.top.grab_set() # Direct all events to this window
+        self.top.lift()
+        self.top.focus_set()
 
         self.notebook = ttk.Notebook(self.top)
         self.notebook.pack(fill='both', expand=True)
@@ -57,7 +135,58 @@ class SettingsWindow:
         self.notebook.add(self.alarm_tab, text='Alarm')
         self.notebook.add(self.timer_tab, text='Timer')
 
-        self.canvas = tk.Canvas(self.alarm_tab)
+        self.populate_alarm_tab()
+        self.load_alarms()
+        self.alarm_manager = alarm_manager
+
+        self.populate_timer_tab()
+
+        self.top.wait_window()  # Wait for the window to be closed
+
+    def add_alarm(self):
+        new_alarm = {'time': '07:00', 'music': 'audios/default.mp3', 'name': ''}
+        self.alarms.append(new_alarm)
+        self.display_alarms()
+
+    def edit_alarm(self, index):
+        data = self.alarms[index]
+        EditAlarmDialog(self.top, index, data, self.update_alarm, self.delete_alarm)
+
+    def update_alarm(self, index, alarm_data):
+        self.alarms[index] = alarm_data
+        self.save_alarms()
+        self.display_alarms()
+        self.alarm_manager.update_alarm(index, alarm_data)
+
+    def delete_alarm(self, index):
+        del self.alarms[index]
+        self.save_alarms()
+        self.display_alarms()
+        self.alarm_manager.delete_alarm(index)
+    
+    def display_alarms(self):
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+        style = ttk.Style()
+        style.configure('TButton', font=('なつめもじ', 12), background='#f0f0f0', relief='ridge')
+        for i, alarm in enumerate(self.alarms):
+            ttk.Button(self.scrollable_frame, text=f"{alarm['time']} {alarm['name']}", style="TButton", command=lambda: self.edit_alarm(i)).pack(pady=2)
+
+    def load_alarms(self):
+        try:
+            with open('alarms.json', 'r') as f:
+                self.alarms = json.load(f)
+        except FileNotFoundError:
+            self.alarms = []
+        self.display_alarms()
+
+    def save_alarms(self):
+        with open('alarms.json', 'w') as f:
+            json.dump(self.alarms, f)
+
+    def populate_alarm_tab(self):
+        self.canvas = tk.Canvas(self.alarm_tab, width=140, height=200)
         self.scrollbar = ttk.Scrollbar(self.alarm_tab, orient='vertical', command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas)
         self.scrollable_frame.bind(
@@ -70,25 +199,7 @@ class SettingsWindow:
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        ttk.Button(self.alarm_tab, text='Add Alarm', command=self.add_alarm).pack()
-        self.alarms = []
-
-        self.populate_alarm_tab()
-        self.populate_timer_tab()
-
-        self.top.wait_window()  # Wait for the window to be closed
-
-    def add_alarm(self):
-        new_alarm = {'time': '07:00', 'music': 'audios/default.mp3', 'comment': ''}
-        self.alarms.append(new_alarm)
-        ttk.Button(self.scrollable_frame, text=f"Alarm at {new_alarm['time']}", command=lambda: self.edit_alarm(new_alarm)).pack()
-
-    def edit_alarm(self, alarm_data):
-        EditAlarmDialog(self.top, alarm_data=alarm_data)
-
-    def populate_alarm_tab(self):
-        self.alarm_label = ttk.Label(self.alarm_tab, text='Alarm Settings')
-        self.alarm_label.pack(pady=10, padx=10)
+        tk.Button(self.alarm_tab, text='＋', command=self.add_alarm).place(anchor='sw', x=110, y=200, width=30, height=30)
 
     def populate_timer_tab(self):
         self.timer_label = ttk.Label(self.timer_tab, text='Timer Settings')
@@ -122,8 +233,8 @@ class FloatingApp:
         self.root.overrideredirect(True)  # Remove window border
         self.root.attributes('-topmost', True)
 
-        self.bg_image = tk.PhotoImage(file="img/bg.png")
-        self.avatar_image = tk.PhotoImage(file="img/erika.png")
+        self.bg_image = tk.PhotoImage(file="images/bg.png")
+        self.avatar_image = tk.PhotoImage(file="images/erika.png")
 
         self.create_widgets()
         self.update_time()
@@ -139,6 +250,8 @@ class FloatingApp:
         # Make the background transparent
         self.root.wm_attributes('-transparentcolor', self.root['bg'])
 
+        self.alarm_manager = AlarmManager()
+
     def create_widgets(self):
         self.canvas = tk.Canvas(self.root, width=320, height=195)
         self.canvas.pack(fill='both', expand=True)
@@ -149,8 +262,8 @@ class FloatingApp:
         # current time
         self.time = self.canvas.create_text(20, 115, text='', font=('なつめもじ', 20), fill='black', anchor='w', tags='time')
 
-        self.hide_button = CanvasButton(self.canvas, 20, 190, 'sw', 'img/close.png', 'img/close_hover.png', self.hide_app)
-        self.settings_button = CanvasButton(self.canvas, 40, 190, 'sw', 'img/settings.png', 'img/settings_hover.png', self.open_settings)
+        self.hide_button = CanvasButton(self.canvas, 20, 190, 'sw', 'images/close.png', 'images/close_hover.png', self.hide_app)
+        self.settings_button = CanvasButton(self.canvas, 40, 190, 'sw', 'images/settings.png', 'images/settings_hover.png', self.open_settings)
 
     def update_time(self):
         # Update the label with the current date and time
@@ -188,10 +301,11 @@ class FloatingApp:
         # Stop the tray icon and quit the application
         if icon:
             icon.stop()
+        self.alarm_manager.shutdown()
         self.root.after(0, self.root.quit)
 
     def create_tray_icon(self):
-        icon_image = Image.open("img/icon.ico").convert('RGBA')
+        icon_image = Image.open("images/icon.ico").convert('RGBA')
         return pystray.Icon(
             name='WaifuClock',
             icon=icon_image,
@@ -202,7 +316,7 @@ class FloatingApp:
         ))
 
     def open_settings(self):
-        self.settings_panel = SettingsWindow(self.root)
+        self.settings_panel = SettingsWindow(self.root, self.alarm_manager)
 
 
 if __name__ == '__main__':
