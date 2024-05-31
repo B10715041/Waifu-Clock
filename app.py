@@ -10,12 +10,20 @@ import threading
 import time
 import tkinter as tk
 
+import contextlib
+with contextlib.redirect_stdout(None):
+    import pygame
+
+
 
 class AlarmManager:
-    def __init__(self):
+    def __init__(self, app):
+        pygame.mixer.init()
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
         self.jobs = {}
+        self.channels = {i: None for i in range(pygame.mixer.get_num_channels())}  # 8 channels by default?
+        self.app = app
 
     def update_alarm(self, alarm_id, alarm_data):
         if alarm_id in self.jobs:
@@ -25,23 +33,40 @@ class AlarmManager:
         trigger = CronTrigger(hour = hour, minute = minute, second=0)
         job = self.scheduler.add_job(self.play_sound, trigger, args=[alarm_data['music']])
         self.jobs[alarm_id] = job
-            
+
     def delete_alarm(self, alarm_id):
         if alarm_id in self.jobs:
             self.jobs[alarm_id].remove()
             del self.jobs[alarm_id]
 
     def play_sound(self, sound_file):
-        from playsound import playsound
-        playsound(sound_file)
+        sound = pygame.mixer.Sound(sound_file)
+        available_channel = self.find_available_channel()
+        if available_channel:
+            available_channel.play(sound)
+            self.app.root.deiconify()
+        else:
+            print('No available channels')
+
+    def find_available_channel(self):
+        for i in range(pygame.mixer.get_num_channels()):
+            if not pygame.mixer.Channel(i).get_busy():
+                return pygame.mixer.Channel(i)
+        return None
+
+    def stop_all_sounds(self):
+        pygame.mixer.stop()
 
     def shutdown(self):
+        pygame.mixer.quit()
         self.scheduler.shutdown()
 
 
 class EditAlarmDialog:
     def __init__(self, master, alarm_index, alarm_data, update_callback, delete_callback):
         self.top = tk.Toplevel(master)
+        self.load_alarm_dialog_position()
+        self.top.protocol('WM_DELETE_WINDOW', self.on_close)
         self.top.title('Edit Alarm')
         self.top.iconbitmap('images/icon.ico')
         self.top.transient(master)
@@ -110,16 +135,44 @@ class EditAlarmDialog:
             return
 
         self.update_callback(self.alarm_index, self.alarm_data)
-        self.top.destroy()
+        self.on_close()
 
     def delete(self):
         self.delete_callback(self.alarm_index)
+        self.on_close()
+
+    def load_alarm_dialog_position(self):
+        try:
+            with open('config.json', 'r') as f:
+                data = json.load(f)
+                pos = data.get('AlarmDialogPosition', '+1000+500')
+                self.top.geometry(pos)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.top.geometry('+1000+500')
+
+    def save_alarm_dialog_position(self):
+        pos = f'+{self.top.winfo_x()}+{self.top.winfo_y()}'
+        try:
+            with open('config.json', 'r+') as f:
+                data = json.load(f)
+                data['AlarmDialogPosition'] =  pos
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            with open('config.json', 'w') as f:
+                json.dump({'AlarmDialogPosition': pos}, f)
+
+    def on_close(self):
+        self.save_alarm_dialog_position()
         self.top.destroy()
 
 
 class SettingsWindow:
     def __init__(self, master, alarm_manager):
         self.top = tk.Toplevel(master)
+        self.load_window_position()
+        self.top.protocol('WM_DELETE_WINDOW', self.on_close)
         self.top.title('Settings')
         self.top.iconbitmap('images/icon.ico')
         self.top.transient(master)
@@ -163,7 +216,7 @@ class SettingsWindow:
         self.save_alarms()
         self.display_alarms()
         self.alarm_manager.delete_alarm(index)
-    
+
     def display_alarms(self):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
@@ -175,15 +228,23 @@ class SettingsWindow:
 
     def load_alarms(self):
         try:
-            with open('alarms.json', 'r') as f:
-                self.alarms = json.load(f)
-        except FileNotFoundError:
+            with open('config.json', 'r') as f:
+                self.alarms = json.load(f).get('Alarms', [])
+        except:
             self.alarms = []
         self.display_alarms()
 
     def save_alarms(self):
-        with open('alarms.json', 'w') as f:
-            json.dump(self.alarms, f)
+        try:
+            with open('config.json', 'r+') as f:
+                data = json.load(f)
+                data['Alarms'] = self.alarms 
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            with open('config.json', 'w') as f:
+                json.dump({'SettingsWindowPosition': pos}, f)
 
     def populate_alarm_tab(self):
         self.canvas = tk.Canvas(self.alarm_tab, width=140, height=200)
@@ -205,6 +266,31 @@ class SettingsWindow:
         self.timer_label = ttk.Label(self.timer_tab, text='Timer Settings')
         self.timer_label.pack(pady=10, padx=10)
 
+    def load_window_position(self):
+        try:
+            with open('config.json', 'r') as f:
+                data = json.load(f)
+                pos = data.get('SettingsWindowPosition', '+1000+500')
+                self.top.geometry(pos)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.top.geometry('+1000+500')
+
+    def save_window_position(self):
+        pos = f'+{self.top.winfo_x()}+{self.top.winfo_y()}'
+        try:
+            with open('config.json', 'r+') as f:
+                data = json.load(f)
+                data['SettingsWindowPosition'] =  pos
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            with open('config.json', 'w') as f:
+                json.dump({'SettingsWindowPosition': pos}, f)
+
+    def on_close(self):
+        self.save_window_position()
+        self.top.destroy()
 
 
 class CanvasButton:
@@ -230,6 +316,7 @@ class CanvasButton:
 class FloatingApp:
     def __init__(self, root):
         self.root = root
+        self.load_app_position()
         self.root.overrideredirect(True)  # Remove window border
         self.root.attributes('-topmost', True)
 
@@ -250,7 +337,7 @@ class FloatingApp:
         # Make the background transparent
         self.root.wm_attributes('-transparentcolor', self.root['bg'])
 
-        self.alarm_manager = AlarmManager()
+        self.alarm_manager = AlarmManager(self)
 
     def create_widgets(self):
         self.canvas = tk.Canvas(self.root, width=320, height=195)
@@ -277,13 +364,16 @@ class FloatingApp:
         self.root.after(1000, self.update_time)  # Update every second
 
     def start_move(self, event):
+        self.alarm_manager.stop_all_sounds()
+
         if event.widget == self.canvas:
             item = self.canvas.find_withtag('current')
             if 'canvas_btn' in self.canvas.gettags(item):
                 return
-            # Calculate absolute position of the cursor on screen
+            # Reletive position of the mouse pointer to the window
             self.x = self.root.winfo_pointerx() - self.root.winfo_rootx()
             self.y = self.root.winfo_pointery() - self.root.winfo_rooty()
+
 
     def do_move(self, event):
         if event.widget == self.canvas:
@@ -292,16 +382,22 @@ class FloatingApp:
                 return
             x = self.root.winfo_pointerx() - self.x
             y = self.root.winfo_pointery() - self.y
+
+            target_y = self.root.winfo_screenheight() - 40
+            snap_threshold = 20
+            if abs(y + 195 - target_y) < snap_threshold:
+                y = target_y - 195
+
             self.root.geometry(f'+{x}+{y}')
 
     def hide_app(self, event=None):
         self.root.withdraw()
 
     def exit_app(self, icon=None, item=None):
-        # Stop the tray icon and quit the application
         if icon:
             icon.stop()
         self.alarm_manager.shutdown()
+        self.save_app_position()
         self.root.after(0, self.root.quit)
 
     def create_tray_icon(self):
@@ -317,6 +413,29 @@ class FloatingApp:
 
     def open_settings(self):
         self.settings_panel = SettingsWindow(self.root, self.alarm_manager)
+
+    def load_app_position(self):
+        try:
+            with open('config.json', 'r') as f:
+                data = json.load(f)
+                pos = data.get('AppPosition', '+1000+500')
+                self.root.geometry(pos)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.root.geometry('+1000+500')
+
+    def save_app_position(self):
+        pos = f'+{self.root.winfo_x()}+{self.root.winfo_y()}'
+        try:
+            with open('config.json', 'r+') as f:
+                data = json.load(f)
+                data['AppPosition'] =  pos
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            with open('config.json', 'w') as f:
+                json.dump({'AppPosition': pos}, f)
+
 
 
 if __name__ == '__main__':
