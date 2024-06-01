@@ -2,6 +2,7 @@ from PIL import Image, ImageTk
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
+from screeninfo import get_monitors
 from tkinter import ttk, messagebox, filedialog
 import glob
 import json
@@ -15,6 +16,7 @@ import tkinter as tk
 import contextlib
 with contextlib.redirect_stdout(None):
     import pygame
+
 
 
 
@@ -65,7 +67,8 @@ class AlarmManager:
 
 
 class EditAlarmDialog:
-    def __init__(self, master, alarm_index, alarm_data, update_callback, delete_callback):
+    def __init__(self, master, app, alarm_index, alarm_data, update_callback, delete_callback):
+        self.main_app = app
         self.top = tk.Toplevel(master)
         self.load_alarm_dialog_position()
         self.top.protocol('WM_DELETE_WINDOW', self.on_close)
@@ -144,26 +147,13 @@ class EditAlarmDialog:
         self.on_close()
 
     def load_alarm_dialog_position(self):
-        try:
-            with open('config.json', 'r') as f:
-                data = json.load(f)
-                pos = data.get('AlarmDialogPosition', '+1000+500')
-                self.top.geometry(pos)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.top.geometry('+1000+500')
+        pos = self.main_app.data.get('AlarmDialogPosition', '+1000+500')
+        self.top.geometry(pos)
 
     def save_alarm_dialog_position(self):
         pos = f'+{self.top.winfo_x()}+{self.top.winfo_y()}'
-        try:
-            with open('config.json', 'r+') as f:
-                data = json.load(f)
-                data['AlarmDialogPosition'] =  pos
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open('config.json', 'w') as f:
-                json.dump({'AlarmDialogPosition': pos}, f)
+        self.main_app.data['AlarmDialogPosition'] = pos
+        self.main_app.save_data()
 
     def on_close(self):
         self.save_alarm_dialog_position()
@@ -172,6 +162,7 @@ class EditAlarmDialog:
 
 class SettingsWindow:
     def __init__(self, master, alarm_manager):
+        self.master = master
         self.top = tk.Toplevel(master.root)
         self.load_window_position()
         self.top.protocol('WM_DELETE_WINDOW', self.on_close)
@@ -181,7 +172,6 @@ class SettingsWindow:
         self.top.grab_set() # Direct all events to this window
         self.top.lift()
         self.top.focus_set()
-        self.master = master
 
         self.notebook = ttk.Notebook(self.top)
         self.notebook.pack(fill='both', expand=True)
@@ -205,7 +195,7 @@ class SettingsWindow:
 
     def edit_alarm(self, index):
         data = self.alarms[index]
-        EditAlarmDialog(self.top, index, data, self.update_alarm, self.delete_alarm)
+        EditAlarmDialog(self.top, self.master, index, data, self.update_alarm, self.delete_alarm)
 
     def update_alarm(self, index, alarm_data):
         self.alarms[index] = alarm_data
@@ -229,24 +219,12 @@ class SettingsWindow:
             ttk.Button(self.scrollable_frame, text=f"{alarm['time']} {alarm['name']}", style="TButton", command=lambda: self.edit_alarm(i)).pack(pady=2)
 
     def load_alarms(self):
-        try:
-            with open('config.json', 'r') as f:
-                self.alarms = json.load(f).get('Alarms', [])
-        except:
-            self.alarms = []
+        self.alarms = self.master.data.get('Alarms', [])
         self.display_alarms()
 
     def save_alarms(self):
-        try:
-            with open('config.json', 'r+') as f:
-                data = json.load(f)
-                data['Alarms'] = self.alarms
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open('config.json', 'w') as f:
-                json.dump({'Alarms': self.alarms}, f)
+        self.master.data['Alarms'] = self.alarms
+        self.master.save_data()
 
     def populate_alarm_tab(self):
         self.canvas = tk.Canvas(self.alarm_tab, width=140, height=200)
@@ -265,9 +243,7 @@ class SettingsWindow:
         tk.Button(self.alarm_tab, text='＋', command=self.add_alarm).place(anchor='sw', x=110, y=200, width=30, height=30)
 
     def populate_chara_tab(self):
-        with open('config.json', 'r') as f:
-            data = json.load(f)
-            self.selected_chara = tk.StringVar(value=data.get('Character', 'erika'))
+        self.selected_chara = tk.StringVar(value=self.master.data.get('Character', 'erika'))
         options = ['瑛里華', '白', '陽菜', '桐葉', '伽耶', 'フィーナ', '麻衣', 'さやか', '菜月', 'リースリット', 'フィアッカ', 'シンシア', 'エステル', 'カレン']
         value = ['erika', 'siro', 'hina', 'kiriha', 'kaya', 'feena', 'mai', 'sayaka', 'natsuki', 'wreath', 'fiacca', 'cynthia', 'estel', 'karen']
         for i, chara in enumerate(options):
@@ -281,41 +257,22 @@ class SettingsWindow:
             self.master.root.after_cancel(self.master.avatar_schedule)
         self.master.png_files = glob.glob(f"images/chara/{chara}/*.png")
         self.master.change_chara()
-        try:
-            with open('config.json', 'r+') as f:
-                data = json.load(f)
-                data['Character'] = chara
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open('config.json', 'w') as f:
-                json.dump({'Character': chara}, f)
+
+        self.master.data['Character'] = chara
+        self.master.save_data()
 
     def load_window_position(self):
-        try:
-            with open('config.json', 'r') as f:
-                data = json.load(f)
-                pos = data.get('SettingsWindowPosition', '+1000+500')
-                self.top.geometry(pos)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.top.geometry('+1000+500')
+        pos = self.master.data.get('SettingsWindowPosition', '+1000+500')
+        self.top.geometry(pos)
 
     def save_window_position(self):
         pos = f'+{self.top.winfo_x()}+{self.top.winfo_y()}'
-        try:
-            with open('config.json', 'r+') as f:
-                data = json.load(f)
-                data['SettingsWindowPosition'] =  pos
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open('config.json', 'w') as f:
-                json.dump({'SettingsWindowPosition': pos}, f)
+        self.master.data['SettingsWindowPosition'] = pos
+        self.master.save_data()
 
     def on_close(self):
         self.save_window_position()
+        self.master.settings_button.ignore_next_focus = True
         self.top.destroy()
 
 
@@ -329,11 +286,15 @@ class CanvasButton:
         self.canvas.tag_bind(self.img, '<Enter>', self.on_enter)
         self.canvas.tag_bind(self.img, '<Leave>', self.on_leave)
         self.canvas.tag_bind(self.img, '<ButtonRelease-1>', self.on_click)
+        self.ignore_next_focus = False
 
     def on_click(self, event):
         self.command()
 
     def on_enter(self, event):
+        if self.ignore_next_focus: # Prevent the button from being focused after closing the settings window (I don't know why this happens)
+            self.ignore_next_focus = False
+            return
         self.canvas.itemconfig(self.img, image=self.image_hover)
 
     def on_leave(self, event):
@@ -342,6 +303,7 @@ class CanvasButton:
 class FloatingApp:
     def __init__(self, root):
         self.root = root
+        self.load_data()
         self.load_app_position()
         self.root.overrideredirect(True)  # Remove window border
         self.root.attributes('-topmost', True)
@@ -358,32 +320,36 @@ class FloatingApp:
         self.tray_thread = threading.Thread(target=self.tray_icon.run)
         self.tray_thread.start()
 
-        # Make the window draggable
         self.root.bind('<Button-1>', self.start_move)
         self.root.bind('<B1-Motion>', self.do_move)
 
-        # Make the background transparent
         self.root.wm_attributes('-transparentcolor', self.root['bg'])
 
         self.alarm_manager = AlarmManager(self)
         self.load_alarms()
 
-    def load_alarms(self):
+    def save_data(self):
+        with open('config.json', 'w') as f:
+            json.dump(self.data, f)
+
+    def load_data(self):
         try:
             with open('config.json', 'r') as f:
-                data = json.load(f)
-                alarms = data.get('Alarms', [])
-                for i, alarm in enumerate(alarms):
-                    self.alarm_manager.update_alarm(i, alarm)
-        except:
-            pass
+                self.data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.data = {}
+
+    def load_alarms(self):
+        alarms = self.data.get('Alarms', [])
+        for i, alarm in enumerate(alarms):
+            self.alarm_manager.update_alarm(i, alarm)
 
     def create_widgets(self):
         self.canvas = tk.Canvas(self.root, width=320, height=260)
         self.canvas.pack(fill='both', expand=True)
 
         self.canvas.create_image(2, 260, image=self.bg_image, anchor='sw')
-        self.avatar = self.canvas.create_image(215, 265, image=self.avatar_image, anchor='s')
+        self.avatar = self.canvas.create_image(215, 265, image=None, anchor='s')
 
         self.weather_frame = tk.Frame(self.canvas)
         self.weather_icon_image = tk.PhotoImage(file='images/weather.png')
@@ -397,9 +363,7 @@ class FloatingApp:
         self.settings_button = CanvasButton(self.canvas, 40, 255, 'sw', 'images/settings.png', 'images/settings_hover.png', self.open_settings)
 
     def load_chara(self):
-        with open('config.json', 'r') as f:
-            data = json.load(f)
-            chara = data.get('Character', 'erika')
+        chara = self.data.get('Character', 'erika')
         if hasattr(self, 'avatar_schedule') and self.avatar_schedule is not None:
             self.root.after_cancel(self.avatar_schedule)
         self.png_files = glob.glob(f"images/chara/{chara}/*.png")
@@ -456,7 +420,6 @@ class FloatingApp:
             self.x = self.root.winfo_pointerx() - self.root.winfo_rootx()
             self.y = self.root.winfo_pointery() - self.root.winfo_rooty()
 
-
     def do_move(self, event):
         if event.widget == self.canvas:
             item = self.canvas.find_withtag('current')
@@ -465,7 +428,12 @@ class FloatingApp:
             x = self.root.winfo_pointerx() - self.x
             y = self.root.winfo_pointery() - self.y
 
-            target_y = self.root.winfo_screenheight() - 40
+            monitors = get_monitors()
+            if len(monitors) > 1 and (x > monitors[0].width or y + 260 > monitors[0].height):
+                target_y = monitors[1].height - 40 + monitors[1].y
+            else:
+                target_y = self.root.winfo_screenheight() - 40
+
             snap_threshold = 20
             if abs(y + 260 - target_y) < snap_threshold:
                 y = target_y - 260
@@ -495,28 +463,15 @@ class FloatingApp:
 
     def open_settings(self):
         self.settings_panel = SettingsWindow(self, self.alarm_manager)
+        self.settings_button.on_leave(None)
 
     def load_app_position(self):
-        try:
-            with open('config.json', 'r') as f:
-                data = json.load(f)
-                pos = data.get('AppPosition', '+1000+500')
-                self.root.geometry(pos)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.root.geometry('+1000+500')
+        pos = self.data.get('AppPosition', '+1000+500')
+        self.root.geometry(pos)
 
     def save_app_position(self):
-        pos = f'+{self.root.winfo_x()}+{self.root.winfo_y()}'
-        try:
-            with open('config.json', 'r+') as f:
-                data = json.load(f)
-                data['AppPosition'] =  pos
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open('config.json', 'w') as f:
-                json.dump({'AppPosition': pos}, f)
+        self.data['AppPosition'] = f'+{self.root.winfo_x()}+{self.root.winfo_y()}'
+        self.save_data()
 
 
 
