@@ -2,6 +2,7 @@ from PIL import Image, ImageTk
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
+from pathlib import Path
 from screeninfo import get_monitors
 from tkinter import ttk, messagebox, filedialog
 import glob
@@ -12,7 +13,7 @@ import re
 import requests
 import threading
 import tkinter as tk
-
+import webbrowser
 import contextlib
 with contextlib.redirect_stdout(None):
     import pygame
@@ -22,11 +23,16 @@ with contextlib.redirect_stdout(None):
 
 class AlarmManager:
     def __init__(self, app):
-        pygame.mixer.init()
+        try:
+            pygame.mixer.init()
+            self.intialized = True
+            self.channels = {i: None for i in range(pygame.mixer.get_num_channels())}  # 8 channels by default?
+        except Exception as e:
+            print(e)
+            self.intialized = False
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
         self.jobs = {}
-        self.channels = {i: None for i in range(pygame.mixer.get_num_channels())}  # 8 channels by default?
         self.app = app
 
     def update_alarm(self, alarm_id, alarm_data):
@@ -46,7 +52,7 @@ class AlarmManager:
     def play_sound(self, sound_file):
         sound = pygame.mixer.Sound(sound_file)
         available_channel = self.find_available_channel()
-        if available_channel:
+        if available_channel and self.intialized:
             available_channel.play(sound)
             self.app.root.deiconify()
         else:
@@ -62,8 +68,11 @@ class AlarmManager:
         pygame.mixer.stop()
 
     def shutdown(self):
-        pygame.mixer.quit()
-        self.scheduler.shutdown()
+        try:
+            pygame.mixer.quit()
+            self.scheduler.shutdown()
+        except Exception as e:
+            print(e)
 
 
 class EditAlarmDialog:
@@ -178,11 +187,14 @@ class SettingsWindow:
 
         self.alarm_tab = ttk.Frame(self.notebook)
         self.timer_tab = ttk.Frame(self.notebook)
+        self.bg_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.alarm_tab, text='アラーム')
         self.notebook.add(self.timer_tab, text='キャラ選択')
+        self.notebook.add(self.bg_tab, text='背景選択')
 
         self.populate_alarm_tab()
         self.populate_chara_tab()
+        self.populate_bg_tab()
         self.load_alarms()
         self.alarm_manager = alarm_manager
 
@@ -252,10 +264,22 @@ class SettingsWindow:
             rb = tk.Radiobutton(self.timer_tab, text=chara, variable=self.selected_chara, value=value[i], command=lambda chara=value[i]: self.change_chara(chara))
             rb.grid(row=row, column=col, sticky='w')
 
+    def populate_bg_tab(self):
+        self.selected_bg = tk.StringVar(value=self.master.data.get('Background', 'bg.png'))
+        options = ['FA', 'けよりな']
+        value = ['bg.png', 'bg2.png']
+        for i, bg in enumerate(options):
+            col = i % 2 
+            row = 0
+            rb = tk.Radiobutton(self.bg_tab, text=bg, variable=self.selected_bg, value=value[i], command=lambda bg=value[i]: self.master.change_bg(bg))
+            rb.grid(row=row, column=col, sticky='w', padx=5, pady=5)
+
+
     def change_chara(self, chara):
-        if self.master.avatar_schedule is not None:
+        if hasattr(self.master, 'avatar_schedule') and self.master.avatar_schedule is not None:
             self.master.root.after_cancel(self.master.avatar_schedule)
         self.master.png_files = glob.glob(f"images/chara/{chara}/*.png")
+        self.master.png_files = [str(Path(file).as_posix()) for file in self.master.png_files]
         self.master.change_chara()
 
         self.master.data['Character'] = chara
@@ -308,10 +332,15 @@ class FloatingApp:
         self.root.overrideredirect(True)  # Remove window border
         self.root.attributes('-topmost', True)
 
-        self.bg_image = tk.PhotoImage(file="images/bg.png")
+        self.root.option_add('*Menu.Font', 'なつめもじ 12')
+
+        self.bg_image = tk.PhotoImage(file='images/' + self.data.get('Background', 'bg.png'))
         self.avatar_image = tk.PhotoImage(file="./images/eri.png")
 
         self.create_widgets()
+
+        self.alarm_manager = AlarmManager(self)
+        self.load_alarms()
         self.load_chara()
         self.update_weather()
         self.update_time()
@@ -320,13 +349,13 @@ class FloatingApp:
         self.tray_thread = threading.Thread(target=self.tray_icon.run)
         self.tray_thread.start()
 
-        self.root.bind('<Button-1>', self.start_move)
-        self.root.bind('<B1-Motion>', self.do_move)
+        self.root.bind('<Button-1>', self.on_mouse_down)
+        self.root.bind('<B1-Motion>', self.on_drag)
+        self.root.bind('<Button-3>', lambda e: self.right_click_menu.post(e.x_root, e.y_root))
+        self.canvas.tag_bind(self.avatar, '<ButtonRelease-1>', self.on_mouse_up)
 
         self.root.wm_attributes('-transparentcolor', self.root['bg'])
 
-        self.alarm_manager = AlarmManager(self)
-        self.load_alarms()
 
     def save_data(self):
         with open('config.json', 'w') as f:
@@ -348,7 +377,7 @@ class FloatingApp:
         self.canvas = tk.Canvas(self.root, width=320, height=260)
         self.canvas.pack(fill='both', expand=True)
 
-        self.canvas.create_image(2, 260, image=self.bg_image, anchor='sw')
+        self.bg = self.canvas.create_image(2, 260, image=self.bg_image, anchor='sw')
         self.avatar = self.canvas.create_image(215, 265, image=None, anchor='s')
 
         self.weather_frame = tk.Frame(self.canvas)
@@ -362,18 +391,52 @@ class FloatingApp:
         self.hide_button = CanvasButton(self.canvas, 20, 255, 'sw', 'images/close.png', 'images/close_hover.png', self.hide_app)
         self.settings_button = CanvasButton(self.canvas, 40, 255, 'sw', 'images/settings.png', 'images/settings_hover.png', self.open_settings)
 
+        self.right_click_menu = tk.Menu(self.root, tearoff=0)
+        self.right_click_menu.add_command(label='VNDB', command=lambda: webbrowser.open('https://vndb.org'))
+        self.right_click_menu.add_command(label='VGMdb', command=lambda: webbrowser.open('https://vgmdb.net'))
+        self.right_click_menu.add_command(label='批評空間', command=lambda: webbrowser.open('https://erogamescape.dyndns.org/'))
+        self.right_click_menu.add_separator()
+        self.right_click_menu.add_command(label='城プロ', command=lambda: webbrowser.open('https://pc-play.games.dmm.com/play/oshirore/'))
+        self.right_click_menu.add_command(label='あいミス', command=lambda: webbrowser.open('https://pc-play.games.dmm.co.jp/play/imys_r/'))
+        self.right_click_menu.add_separator()
+        self.right_click_menu.add_command(label='巴哈', command=lambda: webbrowser.open('https://forum.gamer.com.tw/myBoard.php'))
+        self.right_click_menu.add_separator()
+        self.right_click_menu.add_command(label='HackMD', command=lambda: webbrowser.open('https://hackmd.io/'))
+        self.right_click_menu.add_command(label='GitHub', command=lambda: webbrowser.open('https://github.com/'))
+        self.right_click_menu.add_separator()
+        self.right_click_menu.add_command(label='Exit', command=self.exit_app)
+
     def load_chara(self):
+        with open('voice.json', 'r') as f:
+            self.voice_data = json.load(f)
         chara = self.data.get('Character', 'erika')
         if hasattr(self, 'avatar_schedule') and self.avatar_schedule is not None:
             self.root.after_cancel(self.avatar_schedule)
         self.png_files = glob.glob(f"images/chara/{chara}/*.png")
+        self.png_files = [str(Path(file).as_posix()) for file in self.png_files]
         self.change_chara()
 
     def change_chara(self):
         img = random.choice(self.png_files)
         self.avatar_image = tk.PhotoImage(file=img)
         self.canvas.itemconfig(self.avatar, image=self.avatar_image)
-        self.avatar_schedule = self.root.after(30000, self.change_chara)
+        # self.avatar_schedule = self.root.after(30000, self.change_chara)
+
+        prefix = img.split('/')[-1].replace('.png', '').replace('face_', '')
+        voice_files = self.voice_data.get(prefix, [])
+        if voice_files:
+            print(prefix)
+            voice_file = 'audios/voice/' + random.choice(voice_files) + '.ogg'
+            self.alarm_manager.stop_all_sounds()
+            self.alarm_manager.play_sound(voice_file)
+        else:
+            print('No voice files found for', prefix)
+
+    def change_bg(self, img):
+        self.bg_image = tk.PhotoImage(file='images/' + img)
+        self.canvas.itemconfig(self.bg, image=self.bg_image)
+        self.data['Background'] = img
+        self.save_data()
 
     def get_weather(self, city, api_key):
         url = f'http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric'
@@ -409,8 +472,13 @@ class FloatingApp:
 
         self.root.after(1000, self.update_time)  # Update every second
 
-    def start_move(self, event):
-        self.alarm_manager.stop_all_sounds()
+    def on_mouse_down(self, event):
+        try:
+            self.alarm_manager.stop_all_sounds()
+        except Exception as e:
+            print(e)
+
+        self.mdown_time = datetime.now()
 
         if event.widget == self.canvas:
             item = self.canvas.find_withtag('current')
@@ -420,7 +488,7 @@ class FloatingApp:
             self.x = self.root.winfo_pointerx() - self.root.winfo_rootx()
             self.y = self.root.winfo_pointery() - self.root.winfo_rooty()
 
-    def do_move(self, event):
+    def on_drag(self, event):
         if event.widget == self.canvas:
             item = self.canvas.find_withtag('current')
             if 'canvas_btn' in self.canvas.gettags(item):
@@ -440,12 +508,16 @@ class FloatingApp:
 
             self.root.geometry(f'+{x}+{y}')
 
+    def on_mouse_up(self, event):
+        # click event
+        if (datetime.now() - self.mdown_time).total_seconds() < 0.2:
+            self.change_chara()
+
     def hide_app(self, event=None):
         self.root.withdraw()
 
-    def exit_app(self, icon=None, item=None):
-        if icon:
-            icon.stop()
+    def exit_app(self):
+        self.tray_icon.stop()
         self.alarm_manager.shutdown()
         self.save_app_position()
         self.root.after(0, self.root.quit)

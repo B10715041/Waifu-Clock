@@ -1,5 +1,0 @@
-Pillow
-APScheduler
-screeninfo
-pystray
-pygame
