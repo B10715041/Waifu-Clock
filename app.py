@@ -50,13 +50,14 @@ class AlarmManager:
             del self.jobs[alarm_id]
 
     def play_sound(self, sound_file):
-        sound = pygame.mixer.Sound(sound_file)
-        available_channel = self.find_available_channel()
-        if available_channel and self.intialized:
-            available_channel.play(sound)
-            self.app.root.deiconify()
-        else:
-            print('No available channels')
+        try:
+            sound = pygame.mixer.Sound(sound_file)
+            available_channel = self.find_available_channel()
+            if available_channel and self.intialized:
+                available_channel.play(sound)
+                self.app.root.deiconify()
+        except Exception as e:
+            print('Error playing sound: ', e)
 
     def find_available_channel(self):
         for i in range(pygame.mixer.get_num_channels()):
@@ -65,7 +66,10 @@ class AlarmManager:
         return None
 
     def stop_all_sounds(self):
-        pygame.mixer.stop()
+        try:
+            pygame.mixer.stop()
+        except Exception as e:
+            print(e)
 
     def shutdown(self):
         try:
@@ -179,8 +183,8 @@ class SettingsWindow:
         self.top.iconbitmap('images/icon.ico')
         self.top.transient(master.root)
         self.top.grab_set() # Direct all events to this window
-        self.top.lift()
-        self.top.focus_set()
+        # self.top.lift()
+        # self.top.focus_set()
 
         self.notebook = ttk.Notebook(self.top)
         self.notebook.pack(fill='both', expand=True)
@@ -381,9 +385,12 @@ class FloatingApp:
         self.avatar = self.canvas.create_image(215, 265, image=None, anchor='s')
 
         self.weather_frame = tk.Frame(self.canvas)
-        self.weather_icon_image = tk.PhotoImage(file='images/weather.png')
-        self.weather_icon = self.canvas.create_image(20, 145, image=self.weather_icon_image, anchor='w')
-        self.weather_text = self.canvas.create_text(70, 145, text='', font=('なつめもじ', 12), fill='black', anchor='w')
+        self.weather_icon = self.canvas.create_image(80, 145, image=None, anchor='w')
+        self.weather_text = self.canvas.create_text(33, 145, text='', font=('なつめもじ', 12), fill='black', anchor='w')
+
+        self.create_weather_panel()
+        self.canvas.tag_bind(self.weather_icon, '<Enter>', self.show_forecast)
+        self.canvas.tag_bind(self.weather_icon, '<Leave>', lambda e: self.weather_window.withdraw())
 
         self.time_text = self.canvas.create_text(15, 190, text='', font=('なつめもじ', 25), fill='black', anchor='w', tags='time')
         self.date_text = self.canvas.create_text(20, 220, text='', font=('なつめもじ', 12), fill='black', anchor='w', tags='time')
@@ -406,6 +413,7 @@ class FloatingApp:
         self.right_click_menu.add_separator()
         self.right_click_menu.add_command(label='Exit', command=self.exit_app)
 
+
     def load_chara(self):
         with open('voice.json', 'r') as f:
             self.voice_data = json.load(f)
@@ -425,12 +433,9 @@ class FloatingApp:
         prefix = img.split('/')[-1].replace('.png', '').replace('face_', '')
         voice_files = self.voice_data.get(prefix, [])
         if voice_files:
-            print(prefix)
             voice_file = 'audios/voice/' + random.choice(voice_files) + '.ogg'
             self.alarm_manager.stop_all_sounds()
             self.alarm_manager.play_sound(voice_file)
-        else:
-            print('No voice files found for', prefix)
 
     def change_bg(self, img):
         self.bg_image = tk.PhotoImage(file='images/' + img)
@@ -438,27 +443,28 @@ class FloatingApp:
         self.data['Background'] = img
         self.save_data()
 
-    def get_weather(self, city, api_key):
-        url = f'http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric'
-        data = requests.get(url).json()
-        if data.get('cod') != 200:
-            return f"Error: {data.get('message')}", None
-        temperture = data['main']['temp']
-        icon_url = f"http://openweathermap.org/img/wn/{data['weather'][0]['icon']}.png"
-        return temperture, icon_url
-
     def update_weather(self):
-        city = 'Taipei'
-        api = 'defdfdbe2f16581c1462ab4776db03fb'
-        temp, icon_url = self.get_weather(city, api)
+        api_key = 'ea7f114334c04d3abcb10653240206'
+        location = 'Taipei'
+        days = 7 
+        url = f"http://api.weatherapi.com/v1/forecast.json?key={api_key}&q={location}&days={days}"
 
-        if temp:
-            img = Image.open(requests.get(icon_url, stream=True).raw).resize((50, 50))
-            self.weather_icon_image = ImageTk.PhotoImage(img)
-            self.canvas.itemconfigure(self.weather_icon, image=self.weather_icon_image)
-            self.canvas.itemconfigure(self.weather_text, text=f'{temp}°C')
+        response = requests.get(url)
+        self.weather_data = response.json()
 
-        self.root.after(300000, self.update_weather)  # Update every minute
+        if 'error' in self.weather_data:
+            self.canvas.itemconfigure(self.weather_text, text='Error')
+            return
+
+        img = Image.open(requests.get('https:' + self.weather_data['current']['condition']['icon'], stream=True).raw).resize((40, 40))
+        self.weather_icon_image = ImageTk.PhotoImage(img)
+        self.canvas.itemconfigure(self.weather_icon, image=self.weather_icon_image)
+        self.canvas.itemconfigure(self.weather_text, text=f'{self.weather_data['current']['temp_c']}°C')
+
+        self.update_forecast()
+
+        update_period = 300000  # 5 minutes
+        self.root.after(update_period, self.update_weather)
 
     def update_time(self):
         # Update the label with the current date and time
@@ -544,6 +550,108 @@ class FloatingApp:
     def save_app_position(self):
         self.data['AppPosition'] = f'+{self.root.winfo_x()}+{self.root.winfo_y()}'
         self.save_data()
+    
+    def create_weather_panel(self):
+        self.weather_window = tk.Toplevel(self.root)
+        self.weather_window.overrideredirect(True)
+        # self.weather_window.geometry('400x300')
+        self.weather_window.attributes('-topmost', True)
+        self.weather_window.withdraw()
+
+    def show_forecast(self, event=None):
+        self.weather_window.deiconify()
+
+        width = self.weather_window.winfo_width()
+        height = self.weather_window.winfo_height()
+
+        x = self.root.winfo_pointerx()
+        y = self.root.winfo_pointery()
+
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        monitors = get_monitors()
+        if x > screen_width and len(monitors) > 1:
+            screen_width = monitors[1].width + monitors[1].x
+            screen_height = monitors[1].height + monitors[1].y
+
+        if x + width > screen_width:
+            x = x - width
+        if y + height > screen_height:
+            y = y - height
+
+        self.weather_window.geometry(f'+{x}+{y}')
+
+
+    def update_forecast(self):
+        for widget in self.weather_window.winfo_children():
+            widget.destroy()
+
+        current = self.weather_data['current']
+        forecast = self.weather_data['forecast']['forecastday']
+
+        current_hour = datetime.now().hour
+
+        current_frame = tk.Frame(self.weather_window, pady=10)
+        current_frame.pack(fill='x', expand=True)
+        
+        icon_size = 50
+        font = ('なつめもじ', 14)
+        info_frame = tk.Frame(current_frame)
+        info_frame.pack(side='left', padx=(70, 0), pady=(30, 0))
+        tk.Label(info_frame, text=f"{current['temp_c']}°C", font=font).pack()
+        tk.Label(info_frame, text=f"{current['condition']['text']}", font=font).pack()
+        tk.Label(info_frame, text=f"Chance of Rain: " + str(forecast[0]['hour'][current_hour]['chance_of_rain']) + "%", font=font).pack()
+
+        img = Image.open(requests.get('https:' + current['condition']['icon'], stream=True).raw).resize((70, 70))
+        icon = ImageTk.PhotoImage(img)
+        icon_label = tk.Label(current_frame, image=icon)
+        icon_label.image = icon
+        icon_label.pack(side='left', padx=(30, 0), pady=(15, 0))
+
+        tk.Label(self.weather_window, text='').pack(pady=10)
+
+        # Hourly Forecast
+        hourly_forecast = forecast[0]['hour']
+        relevant_hours = [hour for hour in hourly_forecast if int(hour['time'].split(' ')[1].split(':')[0]) >= current_hour][:7]
+        hourly_frame = tk.Frame(self.weather_window, pady=10, padx=10)
+        hourly_frame.pack(fill='x', expand=True)
+        for hour in relevant_hours:
+            frame = tk.Frame(hourly_frame)
+            frame.pack(side='left')
+            tk.Label(frame, text=hour['time'].split(' ')[1]).pack(pady=10)
+            temp = round(hour['temp_c'])
+            tk.Label(frame, text=f"{temp}°C").pack()
+            icon_path = f"https:{hour['condition']['icon']}"
+            img = Image.open(requests.get(icon_path, stream=True).raw).resize((icon_size, icon_size))
+            photo = ImageTk.PhotoImage(img)
+            icon_label = tk.Label(frame, image=photo)
+            icon_label.image = photo
+            icon_label.pack()
+            tk.Label(frame, text=f"{hour['chance_of_rain']}%").pack()
+
+        # split hourly and daily forecast
+        tk.Label(self.weather_window, text='').pack(pady=10)
+
+        # Daily Forecast for the next 7 days
+        daily_forecast = forecast[:7]  # Adjust according to how many days are actually available
+        daily_frame = tk.Frame(self.weather_window, pady=10, padx=10)
+        daily_frame.pack(fill='x', expand=True)
+        for day in daily_forecast:
+            frame = tk.Frame(daily_frame)
+            frame.pack(side='left')
+            day_of_week = datetime.strptime(day['date'], '%Y-%m-%d').strftime('%a')
+            tk.Label(frame, text=day_of_week).pack(pady=10)
+            temp = round(day['day']['maxtemp_c'])
+            tk.Label(frame, text=f"{temp}°C").pack()
+            icon_path = f"https:{day['day']['condition']['icon']}"
+            img = Image.open(requests.get(icon_path, stream=True).raw).resize((icon_size, icon_size))
+            photo = ImageTk.PhotoImage(img)
+            icon_label = tk.Label(frame, image=photo)
+            icon_label.image = photo
+            icon_label.pack()
+
+
 
 
 
