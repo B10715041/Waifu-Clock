@@ -384,13 +384,15 @@ class FloatingApp:
         self.bg = self.canvas.create_image(2, 260, image=self.bg_image, anchor='sw')
         self.avatar = self.canvas.create_image(215, 265, image=None, anchor='s')
 
-        self.weather_frame = tk.Frame(self.canvas)
-        self.weather_icon = self.canvas.create_image(80, 145, image=None, anchor='w')
-        self.weather_text = self.canvas.create_text(33, 145, text='', font=('なつめもじ', 12), fill='black', anchor='w')
+        # self.weather_frame = tk.Frame(self.canvas)
+        self.weather_icon = self.canvas.create_text(115, 163, text='', font=('なつめもじ', 12), anchor='e')
+        self.weather_text = self.canvas.create_text(115, 140, text='', font=('なつめもじ', 12), fill='black', anchor='e')
 
         self.create_weather_panel()
         self.canvas.tag_bind(self.weather_icon, '<Enter>', self.show_forecast)
         self.canvas.tag_bind(self.weather_icon, '<Leave>', self.on_leave_weather)
+        self.canvas.tag_bind(self.weather_text, '<Enter>', self.show_forecast)
+        self.canvas.tag_bind(self.weather_text, '<Leave>', self.on_leave_weather)
 
         self.time_text = self.canvas.create_text(15, 190, text='', font=('なつめもじ', 25), fill='black', anchor='w', tags='time')
         self.date_text = self.canvas.create_text(20, 220, text='', font=('なつめもじ', 12), fill='black', anchor='w', tags='time')
@@ -434,6 +436,9 @@ class FloatingApp:
         voice_files = self.voice_data.get(prefix, [])
         if voice_files:
             voice_file = 'audios/voice/' + random.choice(voice_files) + '.ogg'
+            # check voice_file exists
+            if not Path(voice_file).exists():
+                return
             self.alarm_manager.stop_all_sounds()
             self.alarm_manager.play_sound(voice_file)
 
@@ -444,26 +449,29 @@ class FloatingApp:
         self.save_data()
 
     def update_weather(self):
-        api_key = 'ea7f114334c04d3abcb10653240206'
-        location = 'Taipei'
-        days = 7
-        url = f"http://api.weatherapi.com/v1/forecast.json?key={api_key}&q={location}&days={days}"
+        api_key = 'CWA-2203B015-EF76-4D5E-B8EC-23660594BF73'
+        base_url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/'
+
+        forecast_number = 'F-D0047-061' # 臺灣各縣市鄉鎮未來3天(72小時)逐3小時天氣預報
+        location = '文山區'
+        url = f"{base_url}{forecast_number}?Authorization={api_key}&locationName={location}&elementName=PoP6h,T,AT,Wx&sort=time"
 
         response = requests.get(url)
-        self.weather_data = response.json()
+        self.weather_data = response.json()['records']['locations'][0]['location'][0]['weatherElement']
+        self.weather_data = { element['elementName']: element['time'] for element in self.weather_data }
 
-        if 'error' in self.weather_data:
-            self.canvas.itemconfigure(self.weather_text, text='Error')
-            return
+        weather_number = 'O-A0003-001' # 現在天氣觀測報告-現在天氣觀測報告
+        station_id = ['A0A010', 'C0AC80'] # 臺灣大學, 博嘉國小
+        url = f"{base_url}{weather_number}?Authorization={api_key}&stationId={station_id[1]}"
+        response = requests.get(url)
+        self.weather_data['current'] = response.json()['records']['Station'][1]['WeatherElement']
 
-        img = Image.open(requests.get('https:' + self.weather_data['current']['condition']['icon'], stream=True).raw).resize((40, 40))
-        self.weather_icon_image = ImageTk.PhotoImage(img)
-        self.canvas.itemconfigure(self.weather_icon, image=self.weather_icon_image)
-        self.canvas.itemconfigure(self.weather_text, text=f'{self.weather_data['current']['temp_c']}°C')
+        self.canvas.itemconfigure(self.weather_icon, text=self.weather_data['current']['Weather'])
+        self.canvas.itemconfigure(self.weather_text, text=f'{self.weather_data['current']['AirTemperature']}°C')
 
         self.update_forecast()
 
-        update_period = 300000  # 5 minutes
+        update_period = 600000  # 10 minutes
         self.root.after(update_period, self.update_weather)
 
     def update_time(self):
@@ -516,8 +524,12 @@ class FloatingApp:
 
     def on_mouse_up(self, event):
         # click event
-        if (datetime.now() - self.mdown_time).total_seconds() < 0.2:
-            self.change_chara()
+        if (datetime.now() - self.mdown_time).total_seconds() > 0.2:
+            return
+        # check if audios/voice folder exists and has files
+        if not Path('audios/voice').exists() or not any(Path('audios/voice').iterdir()):
+            return
+        self.change_chara()
 
     def hide_app(self, event=None):
         self.root.withdraw()
@@ -599,73 +611,58 @@ class FloatingApp:
         for widget in self.weather_window.winfo_children():
             widget.destroy()
 
-        current = self.weather_data['current']
-        forecast = self.weather_data['forecast']['forecastday']
-
-        current_hour = datetime.now().hour
+        wx = self.weather_data['Wx'][:7]
+        at = self.weather_data['AT'][:7]
+        t = self.weather_data['T'][:7]
+        pop = self.weather_data['PoP6h'][:7]
 
         current_frame = tk.Frame(self.weather_window, pady=10)
         current_frame.pack(fill='x', expand=True)
 
-        icon_size = 50
-        font = ('なつめもじ', 14)
-        info_frame = tk.Frame(current_frame)
-        info_frame.pack(side='left', padx=(70, 0), pady=(30, 0))
-        tk.Label(info_frame, text=f"{current['temp_c']}°C", font=font).pack()
-        tk.Label(info_frame, text=f"{current['condition']['text']}", font=font).pack()
-        tk.Label(info_frame, text=f"Chance of Rain: " + str(forecast[0]['hour'][current_hour]['chance_of_rain']) + "%", font=font).pack()
+        font = ('なつめもじ', 12)
+        wx_frame = tk.Frame(self.weather_window, pady=10, padx=10)
+        wx_frame.pack(fill='x', expand=True)
+        for i in range(7):
+            bd_frame = tk.Frame(wx_frame, relief=tk.GROOVE, borderwidth=2)
+            bd_frame.grid(row=0, column=i, padx=5, pady=5, sticky='nsew')
 
-        img = Image.open(requests.get('https:' + current['condition']['icon'], stream=True).raw).resize((70, 70))
-        icon = ImageTk.PhotoImage(img)
-        icon_label = tk.Label(current_frame, image=icon)
-        icon_label.image = icon
-        icon_label.pack(side='left', padx=(30, 0), pady=(15, 0))
+            frame = tk.Frame(bd_frame)
+            frame.grid(row=0, column=0, sticky='nsew')
 
-        tk.Label(self.weather_window, text='').pack(pady=10)
+            time = datetime.strptime(wx[i]['startTime'], '%Y-%m-%d %H:%M:%S').hour
+            tk.Label(frame, text=f"{time}時", font=font).grid(row=0)
 
-        # Hourly Forecast
-        hourly_forecast = forecast[0]['hour']
-        relevant_hours = [hour for hour in hourly_forecast if int(hour['time'].split(' ')[1].split(':')[0]) >= current_hour][:7]
-        if len(relevant_hours) < 7:
-            relevant_hours += forecast[1]['hour'][:7 - len(relevant_hours)]
-        hourly_frame = tk.Frame(self.weather_window, pady=10, padx=10)
-        hourly_frame.pack(fill='x', expand=True)
-        for hour in relevant_hours:
-            frame = tk.Frame(hourly_frame)
-            frame.pack(side='left')
-            tk.Label(frame, text=hour['time'].split(' ')[1]).pack(pady=10)
-            temp = round(hour['temp_c'])
-            tk.Label(frame, text=f"{temp}°C").pack()
-            icon_path = f"https:{hour['condition']['icon']}"
-            img = Image.open(requests.get(icon_path, stream=True).raw).resize((icon_size, icon_size))
+            is_night = time < 6 or time > 18
+            if is_night:
+                img = Image.open(f"images/weather icons/{wx[i]['elementValue'][1]['value']}n.png")
+            else:
+                img = Image.open(f"images/weather icons/{wx[i]['elementValue'][1]['value']}.png")
             photo = ImageTk.PhotoImage(img)
             icon_label = tk.Label(frame, image=photo)
             icon_label.image = photo
-            icon_label.pack()
-            tk.Label(frame, text=f"{hour['chance_of_rain']}%").pack()
+            icon_label.grid(row=1)
 
-        # split hourly and daily forecast
-        tk.Label(self.weather_window, text='').pack(pady=10)
+            tk.Label(frame, text=f"{at[i]['elementValue'][0]['value']}°C/{t[i]['elementValue'][0]['value']}°C", font=font).grid(row=2)
 
-        # Daily Forecast for the next 7 days
-        daily_forecast = forecast[:7]  # Adjust according to how many days are actually available
-        daily_frame = tk.Frame(self.weather_window, pady=10, padx=10)
-        daily_frame.pack(fill='x', expand=True)
-        for day in daily_forecast:
-            frame = tk.Frame(daily_frame)
-            frame.pack(side='left')
-            day_of_week = datetime.strptime(day['date'], '%Y-%m-%d').strftime('%a')
-            tk.Label(frame, text=day_of_week).pack(pady=10)
-            temp = round(day['day']['maxtemp_c'])
-            tk.Label(frame, text=f"{temp}°C").pack()
-            icon_path = f"https:{day['day']['condition']['icon']}"
-            img = Image.open(requests.get(icon_path, stream=True).raw).resize((icon_size, icon_size))
-            photo = ImageTk.PhotoImage(img)
-            icon_label = tk.Label(frame, image=photo)
-            icon_label.image = photo
-            icon_label.pack()
-            tk.Label(frame, text=f"{day['day']['daily_chance_of_rain']}%").pack()
 
+            # frame_p = tk.Frame(wx_frame, relief=tk.GROOVE, borderwidth=2)
+            # frame_p.grid(row=1, column=i, padx=5, pady=5, sticky='nsew')
+
+            # date = datetime.strptime(pop[i]['startTime'], '%Y-%m-%d %H:%M:%S').strftime('%m/%d')
+            # date = re.sub(r'\b0+(\d)', r'\1', date)
+            # time = datetime.strptime(pop[i]['startTime'], '%Y-%m-%d %H:%M:%S').hour
+
+            # tk.Label(frame_p, text=f"{date}", font=font).grid(row=0, pady=(0, 5))
+            # tk.Label(frame_p, text=f"{time}時", font=font).grid(row=1)
+            # tk.Label(frame_p, text=f"{pop[i]['elementValue'][0]['value']}%", font=font).grid(row=2)
+
+            bd_frame.grid_columnconfigure(0, weight=1)
+            frame.grid_columnconfigure(0, weight=1)
+            # frame_p.grid_columnconfigure(0, weight=1)
+
+        # Make each column have the same width
+        for i in range(7):
+            wx_frame.grid_columnconfigure(i, weight=1)
 
 
 
