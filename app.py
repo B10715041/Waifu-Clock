@@ -205,7 +205,7 @@ class SettingsWindow:
         self.top.wait_window()  # Wait for the window to be closed
 
     def add_alarm(self):
-        new_alarm = {'time': '07:00', 'music': 'audios/default.mp3', 'name': ''}
+        new_alarm = {'time': '07:00', 'music': 'audios/default.wav', 'name': ''}
         self.alarms.append(new_alarm)
         self.display_alarms()
 
@@ -273,7 +273,7 @@ class SettingsWindow:
         options = ['FA', 'けよりな']
         value = ['bg.png', 'bg2.png']
         for i, bg in enumerate(options):
-            col = i % 2 
+            col = i % 2
             row = 0
             rb = tk.Radiobutton(self.bg_tab, text=bg, variable=self.selected_bg, value=value[i], command=lambda bg=value[i]: self.master.change_bg(bg))
             rb.grid(row=row, column=col, sticky='w', padx=5, pady=5)
@@ -390,7 +390,7 @@ class FloatingApp:
 
         self.create_weather_panel()
         self.canvas.tag_bind(self.weather_icon, '<Enter>', self.show_forecast)
-        self.canvas.tag_bind(self.weather_icon, '<Leave>', lambda e: self.weather_window.withdraw())
+        self.canvas.tag_bind(self.weather_icon, '<Leave>', self.on_leave_weather)
 
         self.time_text = self.canvas.create_text(15, 190, text='', font=('なつめもじ', 25), fill='black', anchor='w', tags='time')
         self.date_text = self.canvas.create_text(20, 220, text='', font=('なつめもじ', 12), fill='black', anchor='w', tags='time')
@@ -446,7 +446,7 @@ class FloatingApp:
     def update_weather(self):
         api_key = 'ea7f114334c04d3abcb10653240206'
         location = 'Taipei'
-        days = 7 
+        days = 7
         url = f"http://api.weatherapi.com/v1/forecast.json?key={api_key}&q={location}&days={days}"
 
         response = requests.get(url)
@@ -550,7 +550,7 @@ class FloatingApp:
     def save_app_position(self):
         self.data['AppPosition'] = f'+{self.root.winfo_x()}+{self.root.winfo_y()}'
         self.save_data()
-    
+
     def create_weather_panel(self):
         self.weather_window = tk.Toplevel(self.root)
         self.weather_window.overrideredirect(True)
@@ -558,7 +558,19 @@ class FloatingApp:
         self.weather_window.attributes('-topmost', True)
         self.weather_window.withdraw()
 
-    def show_forecast(self, event=None):
+    def on_leave_weather(self, event):
+        if hasattr(event.widget, 'hover_id'):
+            try:
+                event.widget.after_cancel(event.widget.hover_id)
+                event.widget.hover_id = None
+            except Exception as e:
+                print(e)
+        self.weather_window.withdraw()
+
+    def show_forecast(self, event):
+        event.widget.hover_id = event.widget.after(1000, self.move_weather_panel)
+
+    def move_weather_panel(self):
         self.weather_window.deiconify()
 
         width = self.weather_window.winfo_width()
@@ -594,7 +606,7 @@ class FloatingApp:
 
         current_frame = tk.Frame(self.weather_window, pady=10)
         current_frame.pack(fill='x', expand=True)
-        
+
         icon_size = 50
         font = ('なつめもじ', 14)
         info_frame = tk.Frame(current_frame)
@@ -614,6 +626,8 @@ class FloatingApp:
         # Hourly Forecast
         hourly_forecast = forecast[0]['hour']
         relevant_hours = [hour for hour in hourly_forecast if int(hour['time'].split(' ')[1].split(':')[0]) >= current_hour][:7]
+        if len(relevant_hours) < 7:
+            relevant_hours += forecast[1]['hour'][:7 - len(relevant_hours)]
         hourly_frame = tk.Frame(self.weather_window, pady=10, padx=10)
         hourly_frame.pack(fill='x', expand=True)
         for hour in relevant_hours:
@@ -650,6 +664,7 @@ class FloatingApp:
             icon_label = tk.Label(frame, image=photo)
             icon_label.image = photo
             icon_label.pack()
+            tk.Label(frame, text=f"{day['day']['daily_chance_of_rain']}%").pack()
 
 
 
