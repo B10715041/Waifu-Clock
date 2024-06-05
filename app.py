@@ -467,7 +467,7 @@ class FloatingApp:
         self.weather_data['current'] = response.json()['records']['Station'][1]['WeatherElement']
 
         self.canvas.itemconfigure(self.weather_icon, text=self.weather_data['current']['Weather'])
-        self.canvas.itemconfigure(self.weather_text, text=f'{self.weather_data['current']['AirTemperature']}°C')
+        self.canvas.itemconfigure(self.weather_text, text=f"{self.weather_data['current']['AirTemperature']}°C")
 
         self.update_forecast()
 
